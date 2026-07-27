@@ -69,4 +69,5 @@ export const useTelemetry = (userId: string) => {
       ws.current?.close();
     };
   }, [userId]);
+  return{};
 };

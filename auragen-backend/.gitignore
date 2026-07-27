@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build / Compiled output
+dist/
+build/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS metadata
+.DS_Store
+Thumbs.db
