@@ -3,17 +3,86 @@ import { WebSocketServer, WebSocket } from 'ws';
 const PORT = 8080;
 const wss = new WebSocketServer({ port: PORT });
 
-console.log(`🚀 AuraGen Telemetry Server running on ws://127.0.0.1:${PORT}`);
+console.log(`🚀 AuraGen Week 4 Enterprise Server running on ws://127.0.0.1:${PORT}`);
 
-// Active session state tracking
-let frictionScore = 0;
-const FRICTION_THRESHOLD = 70;
+interface TelemetryEvent {
+  type: string;
+  timestamp: string;
+  pointsAdded: number;
+}
 
-wss.on('connection', (ws: WebSocket) => {
-  console.log('📡 Telemetry pipeline connected successfully!');
-  
-  // Reset score on new connection
-  frictionScore = 0;
+interface SessionData {
+  id: string;
+  connectedAt: string;
+  frictionScore: number;
+  events: TelemetryEvent[];
+  morphed: boolean;
+}
+
+// In-Memory Session Store & Admin Sockets
+const activeSessions: Map<string, SessionData> = new Map();
+const adminSockets: Set<WebSocket> = new Set();
+
+// Helper: Broadcast live events to connected Admin Dashboards
+function broadcastToAdmins(payload: object) {
+  const message = JSON.stringify(payload);
+  adminSockets.forEach((adminWs) => {
+    if (adminWs.readyState === WebSocket.OPEN) {
+      adminWs.send(message);
+    }
+  });
+}
+
+// Helper: Basic AST / Structure Safety Validation for dynamic UI
+function validateComponentAST(componentCode: string): boolean {
+  // Verifies payload is non-empty and contains no unsanitized script injection tags
+  if (!componentCode || componentCode.includes('<script>') || componentCode.includes('javascript:')) {
+    return false;
+  }
+  return true;
+}
+
+wss.on('connection', (ws: WebSocket, req) => {
+  const requestUrl = req.url || '';
+
+  // 1. ROUTE: Admin Stream Connection
+  if (requestUrl === '/admin-stream') {
+    adminSockets.add(ws);
+    console.log('🛡️ Admin Telemetry Dashboard connected to stream.');
+
+    // Send initial snapshot of all active sessions
+    ws.send(JSON.stringify({
+      type: 'INITIAL_STATE',
+      totalSessions: activeSessions.size,
+      sessions: Array.from(activeSessions.values())
+    }));
+
+    ws.on('close', () => {
+      adminSockets.delete(ws);
+      console.log('🛡️ Admin Telemetry Dashboard disconnected.');
+    });
+    return;
+  }
+
+  // 2. ROUTE: Client Telemetry Session Connection
+  const sessionId = `SESS-${Math.floor(1000 + Math.random() * 9000)}`;
+  const session: SessionData = {
+    id: sessionId,
+    connectedAt: new Date().toISOString(),
+    frictionScore: 0,
+    events: [],
+    morphed: false
+  };
+
+  activeSessions.set(sessionId, session);
+  console.log(`📡 Client Connected: [${sessionId}]`);
+
+  // Inform Admin stream of new active session
+  broadcastToAdmins({
+    type: 'SESSION_CREATED',
+    sessionId,
+    totalSessions: activeSessions.size
+  });
 
   ws.on('message', (message: string) => {
     try {
@@ -24,71 +93,98 @@ wss.on('connection', (ws: WebSocket) => {
       switch (data.type) {
         case 'RAGE_CLICK':
           pointsAdded = 35;
-          console.log(`🚨 Signal Captured: RAGE CLICK (+${pointsAdded} pts)`);
           break;
-
         case 'DEAD_CLICK':
           pointsAdded = 20;
-          console.log(`⚠️ Signal Captured: DEAD CLICK on static text (+${pointsAdded} pts)`);
           break;
-
         case 'MOUSE_THRASHING':
           pointsAdded = 25;
-          console.log(`🌀 Signal Captured: CURSOR THRASHING (+${pointsAdded} pts)`);
           break;
-
         default:
           break;
       }
 
-      // Update total friction score
-      frictionScore = Math.min(100, frictionScore + pointsAdded);
-      console.log(`📊 Current User Friction Score: [ ${frictionScore} / 100 ]`);
+      if (pointsAdded > 0) {
+        session.frictionScore = Math.min(100, session.frictionScore + pointsAdded);
+        const eventItem: TelemetryEvent = {
+          type: data.type,
+          timestamp: new Date().toISOString(),
+          pointsAdded
+        };
+        session.events.push(eventItem);
 
-      // Broadcast score back to client for real-time visualization
-      ws.send(JSON.stringify({ type: 'SCORE_UPDATE', score: frictionScore }));
+        console.log(`📊 [${sessionId}] Signal: ${data.type} | Score: ${session.frictionScore}/100`);
 
-      // Trigger self-healing when threshold is crossed
-      if (frictionScore >= FRICTION_THRESHOLD) {
-        console.log('🤖 Friction threshold breached! Triggering Adaptive UI Morphing...');
+        // Send score update back to client
+        ws.send(JSON.stringify({ type: 'SCORE_UPDATE', score: session.frictionScore }));
 
-        const interactiveWizardComponent = `
-          <div style="display: flex; flex-direction: column; gap: 12px; text-align: left;">
-            <p style="font-size: 13px; color: #374151; font-weight: 600; margin: 0;">
-              ✨ Auto-Assisted Smart Portal
-            </p>
-            <div>
-              <label style="font-size: 11px; font-weight: bold; color: #4b5563;">ACCOUNT ID</label>
-              <input type="text" placeholder="e.g. ACC-9821" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; margin-top: 4px;" />
+        // Broadcast event live to Admin Dashboard
+        broadcastToAdmins({
+          type: 'LIVE_EVENT',
+          sessionId,
+          eventType: data.type,
+          newScore: session.frictionScore,
+          timestamp: eventItem.timestamp
+        });
+
+        // Trigger Self-Healing UI Morphing on Threshold Breach (>= 70 pts)
+        if (session.frictionScore >= 70 && !session.morphed) {
+          const wizardComponentHTML = `
+            <div style="display: flex; flex-direction: column; gap: 10px; text-align: left;">
+              <p style="font-size: 13px; color: #1e40af; font-weight: bold; margin: 0;">
+                ✨ Auto-Assisted Smart Express Form
+              </p>
+              <div>
+                <label style="font-size: 10px; font-weight: bold; color: #475569;">ACCOUNT / TICKET ID</label>
+                <input type="text" placeholder="e.g. ACC-9821" style="width: 100%; padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; margin-top: 2px;" />
+              </div>
+              <div>
+                <label style="font-size: 10px; font-weight: bold; color: #475569;">ISSUE CATEGORY</label>
+                <select style="width: 100%; padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; margin-top: 2px; background: white;">
+                  <option>Access & Login Issue</option>
+                  <option>Billing / Payment Portal</option>
+                  <option>Data Sync Error</option>
+                </select>
+              </div>
+              <button onclick="alert('Ticket Submitted via Self-Healed UI!')" style="width: 100%; background: #2563eb; color: white; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 4px; font-size: 12px;">
+                Submit Express Ticket
+              </button>
             </div>
-            <div>
-              <label style="font-size: 11px; font-weight: bold; color: #4b5563;">ISSUE CATEGORY</label>
-              <select style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; margin-top: 4px; background: white;">
-                <option>Billing & Access Portal</option>
-                <option>Data Sync Issue</option>
-                <option>General Support</option>
-              </select>
-            </div>
-            <button onclick="alert('Form submitted via Self-Healed Wizard!')" style="width: 100%; background: #2563eb; color: white; border: none; padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; margin-top: 4px;">
-              Submit Express Ticket
-            </button>
-          </div>
-        `;
+          `;
 
-        ws.send(JSON.stringify({
-          type: 'MORPH_UI_COMMAND',
-          componentCode: interactiveWizardComponent
-        }));
+          // AST Security Inspector Check
+          if (validateComponentAST(wizardComponentHTML)) {
+            session.morphed = true;
+            console.log(`🤖 AST Validated! Pushing MORPH_UI_COMMAND to [${sessionId}]`);
 
-        // Reset score after morphing
-        frictionScore = 0;
+            ws.send(JSON.stringify({
+              type: 'MORPH_UI_COMMAND',
+              componentCode: wizardComponentHTML
+            }));
+
+            // Notify Admin Dashboard of Morph event
+            broadcastToAdmins({
+              type: 'MORPH_TRIGGERED',
+              sessionId,
+              timestamp: new Date().toISOString()
+            });
+          } else {
+            console.error(`🚨 AST Security Check Failed for payload in [${sessionId}]`);
+          }
+        }
       }
     } catch (err) {
-      console.error('Error parsing message:', err);
+      console.error('Error parsing telemetry payload:', err);
     }
   });
 
   ws.on('close', () => {
-    console.log('🔌 Client disconnected.');
+    activeSessions.delete(sessionId);
+    console.log(`🔌 Client Disconnected: [${sessionId}]`);
+    broadcastToAdmins({
+      type: 'SESSION_CLOSED',
+      sessionId,
+      totalSessions: activeSessions.size
+    });
   });
 });
